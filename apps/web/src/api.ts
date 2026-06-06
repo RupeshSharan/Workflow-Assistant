@@ -210,6 +210,32 @@ export const api = {
     return request("/documents", { method: "POST", session, body: input });
   },
 
+  uploadDocument(session: Session, file: File, title?: string): Promise<{ document: KnowledgeDocument }> {
+    const headers: Record<string, string> = {};
+    if (session.token) {
+      headers.authorization = `Bearer ${session.token}`;
+      if (session.activeWorkspaceId) {
+        headers["x-workspace-id"] = session.activeWorkspaceId;
+      }
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+    if (title) {
+      formData.append("title", title);
+    }
+    return fetch(`${API_BASE}/documents/upload`, {
+      method: "POST",
+      headers,
+      body: formData
+    }).then(async (response) => {
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body?.error?.message || body?.error || "Upload failed.");
+      }
+      return body;
+    });
+  },
+
   indexDocument(session: Session, documentId: string): Promise<{ document: KnowledgeDocument; chunks: number }> {
     return request(`/documents/${documentId}/index`, { method: "POST", session });
   },

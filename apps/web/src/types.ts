@@ -204,12 +204,22 @@ export interface ProductivityStats {
     userName: string;
     completedCount: number;
   }>;
+  activeItemsPerUser: Array<{
+    userId: string;
+    userName: string;
+    activeCount: number;
+  }>;
   cycleTimeStats: {
     avgHoursClosed: number;
     closedCount: number;
+    totalCount: number;
   };
   priorityBreakdown: Array<{
     priority: string;
+    count: number;
+  }>;
+  weeklyVelocity: Array<{
+    weekStart: string;
     count: number;
   }>;
 }

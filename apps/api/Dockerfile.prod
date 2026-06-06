@@ -1,0 +1,40 @@
+FROM node:24-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/shared/package.json ./packages/shared/
+
+RUN npm ci
+
+COPY . .
+
+# Compile code across workspace
+RUN npm run build
+
+# Prune devDependencies to reduce image size
+RUN npm prune --omit=dev
+
+FROM node:24-alpine AS runner
+
+WORKDIR /app
+
+RUN apk add --no-cache postgresql-client
+
+ENV NODE_ENV=production
+
+# Copy workspace node_modules
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/packages/shared ./packages/shared
+COPY --from=builder /app/apps/api ./apps/api
+COPY --from=builder /app/database ./database
+
+# Use node user
+USER node
+
+EXPOSE 4000
+
+CMD ["node", "apps/api/dist/server.js"]

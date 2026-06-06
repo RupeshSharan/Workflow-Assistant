@@ -89,7 +89,7 @@ analyticsRouter.get(
   asyncHandler(async (request, response) => {
     const tenant = request.tenant!;
 
-    const [completedItemsRes, cycleTimeRes, priorityRes] = await Promise.all([
+    const [completedItemsRes, activeItemsRes, cycleTimeRes, priorityRes, weeklyVelocityRes] = await Promise.all([
       query<{ userId: string; userName: string; completedCount: number }>(
         `SELECT u.id AS "userId", u.name AS "userName", COUNT(wi.id)::INTEGER AS "completedCount"
            FROM users u
@@ -103,12 +103,26 @@ analyticsRouter.get(
           ORDER BY "completedCount" DESC`,
         [tenant.orgId, tenant.workspaceId]
       ),
-      query<{ avgHoursClosed: number; closedCount: number }>(
+      query<{ userId: string; userName: string; activeCount: number }>(
+        `SELECT u.id AS "userId", u.name AS "userName", COUNT(wi.id)::INTEGER AS "activeCount"
+           FROM users u
+           JOIN memberships m ON m.user_id = u.id AND m.org_id = $1 AND m.workspace_id = $2
+           LEFT JOIN work_items wi ON wi.assignee_id = u.id 
+             AND wi.org_id = $1 AND wi.workspace_id = $2 AND wi.deleted_at IS NULL
+             AND wi.current_stage_id IN (
+               SELECT id FROM workflow_stages WHERE template_id = wi.template_id AND is_terminal = FALSE
+             )
+          GROUP BY u.id, u.name
+          ORDER BY "activeCount" DESC`,
+        [tenant.orgId, tenant.workspaceId]
+      ),
+      query<{ avgHoursClosed: number; closedCount: number; totalCount: number }>(
         `SELECT 
            COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 3600), 0)::DOUBLE PRECISION AS "avgHoursClosed",
-           COUNT(*)::INTEGER AS "closedCount"
+           COUNT(*) FILTER (WHERE closed_at IS NOT NULL)::INTEGER AS "closedCount",
+           COUNT(*)::INTEGER AS "totalCount"
          FROM work_items
-         WHERE org_id = $1 AND workspace_id = $2 AND deleted_at IS NULL AND closed_at IS NOT NULL`,
+         WHERE org_id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
         [tenant.orgId, tenant.workspaceId]
       ),
       query<{ priority: string; count: number }>(
@@ -120,13 +134,30 @@ analyticsRouter.get(
          WHERE wi.org_id = $1 AND wi.workspace_id = $2 AND wi.deleted_at IS NULL
          GROUP BY wi.priority`,
         [tenant.orgId, tenant.workspaceId]
+      ),
+      query<{ weekStart: string; count: number }>(
+        `WITH weeks AS (
+           SELECT DATE_TRUNC('week', NOW() - (i || ' week')::INTERVAL) AS week_start
+           FROM generate_series(0, 5) i
+         )
+         SELECT 
+           w.week_start AS "weekStart",
+           COUNT(wi.id)::INTEGER AS "count"
+         FROM weeks w
+         LEFT JOIN work_items wi ON DATE_TRUNC('week', wi.closed_at) = w.week_start
+           AND wi.org_id = $1 AND wi.workspace_id = $2 AND wi.deleted_at IS NULL AND wi.closed_at IS NOT NULL
+         GROUP BY w.week_start
+         ORDER BY w.week_start ASC`,
+        [tenant.orgId, tenant.workspaceId]
       )
     ]);
 
     response.json({
       completedItemsPerUser: completedItemsRes.rows,
+      activeItemsPerUser: activeItemsRes.rows,
       cycleTimeStats: cycleTimeRes.rows[0],
-      priorityBreakdown: priorityRes.rows
+      priorityBreakdown: priorityRes.rows,
+      weeklyVelocity: weeklyVelocityRes.rows
     });
   })
 );

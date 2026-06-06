@@ -118,6 +118,7 @@ export function PlatformShell({ session, onSessionChange }: PlatformShellProps) 
       />
       <main className="workspace-main">
         <Header
+          session={scopedSession}
           activeWorkspace={activeWorkspace}
           onOpenCommandPalette={() => setShowCommandPalette(true)}
         />
