@@ -1153,3 +1153,20 @@ writes.
 - Verified monorepo builds compile successfully (`npm run build`).
 - Verified all 28 unit/integration tests pass cleanly (`npm run test`).
 
+
+### 2026-06-07 - Git Configuration & Env Templates
+
+**Goal:** Correctly configure `.gitignore` to exclude OS files, IDE configs, dependency caches, and build folders, while ensuring example templates are tracked.
+
+**Completed:**
+- **gitignore Refinement**: Expanded `.gitignore` rules to comprehensively cover logs, compiled packages, IDE/workspace data (e.g. `.vscode`, `.idea`), lockfiles, cache stores, OS specific items (`.DS_Store`, `Thumbs.db`), and local Docker volumes (`postgres-data/`, `redis-data/`).
+- **Env Templates tracking**: Configured white-listing templates to track `.env.prod.example` and committed it to remote source control.
+
+**Files changed:**
+- `.gitignore`
+- `.env.prod.example`
+- `reference.md`
+
+**Verification:**
+- Verified git status is clean and pushed successfully to GitHub remote.
+
