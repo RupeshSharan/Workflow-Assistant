@@ -16,6 +16,7 @@ import type {
   Workflow,
   WorkflowDraft,
   Workspace,
+  WorkspaceMemory,
   StageBottleneck,
   ProductivityStats,
   AdaptiveInsight,
@@ -250,8 +251,20 @@ export const api = {
   groundedChat(
     session: Session,
     question: string
-  ): Promise<{ answer: string; sources: SearchMatch[]; runId: string }> {
+  ): Promise<{
+    answer: string;
+    sources: SearchMatch[];
+    runId: string;
+    confidence?: number;
+    insufficientContext?: boolean;
+    sourcesUsed?: string[];
+    workspaceContextUsed?: any;
+  }> {
     return request("/ai/chat", { method: "POST", session, body: { question } });
+  },
+
+  workspaceMemory(session: Session): Promise<WorkspaceMemory> {
+    return request("/ai/workspace-memory", { session });
   },
 
   draftWorkflow(session: Session, prompt: string): Promise<{ draft: WorkflowDraft; runId: string }> {

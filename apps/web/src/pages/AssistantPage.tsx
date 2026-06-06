@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { Bot, ShieldCheck, Terminal, FileText } from "lucide-react";
 import { api } from "../api";
@@ -33,6 +33,12 @@ export function AssistantPage({
   const [activeMode, setActiveMode] = useState<"chat" | "agent">("chat");
   const [question, setQuestion] = useState("");
   const [command, setCommand] = useState("");
+
+  const memoryQuery = useQuery({
+    queryKey: ["workspace-memory", session.activeWorkspaceId],
+    queryFn: () => api.workspaceMemory(session),
+    enabled: !!session.activeWorkspaceId
+  });
 
   const chatMutation = useMutation({
     mutationFn: () => api.groundedChat(session, question)
@@ -144,7 +150,7 @@ export function AssistantPage({
               <textarea
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                placeholder="Ask about workspace files (e.g., What are the deployment steps?)"
+                placeholder="Ask about workspace files (e.g., What are the approval rules?)"
                 required
                 style={{ height: "90px" }}
               />
@@ -166,58 +172,192 @@ export function AssistantPage({
                   boxShadow: "0 4px 15px rgba(0,0,0,0.02)"
                 }}
               >
-                <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <ShieldCheck size={18} className="text-green-600" /> Answer
-                  <span className="citation-badge" style={{ fontSize: "0.65rem" }}>
-                    Grounded in {chatMutation.data.sources.length} sources
-                  </span>
-                </h4>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, display: "flex", alignItems: "center", gap: "0.5rem", margin: 0 }}>
+                    <ShieldCheck size={18} className="text-green-600" /> Answer
+                    <span className="citation-badge" style={{ fontSize: "0.65rem" }}>
+                      Grounded in {chatMutation.data.sources.length} sources
+                    </span>
+                  </h4>
+                  {chatMutation.data.confidence !== undefined && (
+                    <span style={{
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      padding: "3px 9px",
+                      borderRadius: "12px",
+                      background: chatMutation.data.insufficientContext 
+                        ? "rgba(239, 68, 68, 0.15)" 
+                        : chatMutation.data.confidence > 70 
+                          ? "rgba(16, 185, 129, 0.15)" 
+                          : chatMutation.data.confidence > 40 
+                            ? "rgba(245, 158, 11, 0.15)" 
+                            : "rgba(239, 68, 68, 0.15)",
+                      color: chatMutation.data.insufficientContext 
+                        ? "#b91c1c" 
+                        : chatMutation.data.confidence > 70 
+                          ? "#047857" 
+                          : chatMutation.data.confidence > 40 
+                            ? "#b45309" 
+                            : "#b91c1c"
+                    }}>
+                      Confidence: {chatMutation.data.insufficientContext ? 0 : chatMutation.data.confidence}%
+                    </span>
+                  )}
+                </div>
+
+                {chatMutation.data.insufficientContext && (
+                  <div style={{
+                    marginTop: "1rem",
+                    padding: "0.75rem 1rem",
+                    background: "rgba(239, 68, 68, 0.08)",
+                    border: "1px solid rgba(239, 68, 68, 0.15)",
+                    borderRadius: "8px",
+                    color: "#b91c1c",
+                    fontSize: "0.85rem",
+                    fontWeight: 500
+                  }}>
+                    ⚠️ I could not find enough workspace-specific context to answer this safely.
+                  </div>
+                )}
+
                 <p style={{ marginTop: "0.75rem", fontSize: "0.95rem", lineHeight: "1.6", color: "var(--forest-dark)" }}>
                   {chatMutation.data.answer}
                 </p>
+
+                {chatMutation.data.sourcesUsed && chatMutation.data.sourcesUsed.length > 0 && (
+                  <div style={{ marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--line)" }}>
+                    <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", margin: "0 0 0.35rem 0" }}>
+                      Cited Sources
+                    </p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                      {chatMutation.data.sourcesUsed.map((src) => (
+                        <span key={src} style={{ fontSize: "0.75rem", padding: "2px 8px", background: "var(--surface-muted)", border: "1px solid var(--line)", borderRadius: "6px", color: "var(--forest-dark)" }}>
+                          📄 {src}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          {/* Right panel: ground sources references */}
-          <aside
-            style={{
-              background: "white",
-              border: "1px solid var(--line)",
-              borderRadius: "12px",
-              padding: "1.25rem",
-              height: "fit-content"
-            }}
-          >
-            <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.95rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <FileText size={16} /> Retrieved sources
-            </h4>
-            <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {chatMutation.data?.sources.map((source, idx) => (
-                <div
-                  key={source.chunkId}
-                  style={{
-                    padding: "0.75rem",
-                    border: "1px solid var(--line)",
-                    background: "var(--surface-muted)",
-                    borderRadius: "6px",
-                    fontSize: "0.8rem"
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-                    <span>{source.title}</span>
-                    <span style={{ color: "var(--status-purple)" }}>[Source {idx + 1}]</span>
-                  </div>
-                  <p style={{ margin: "0.4rem 0", color: "var(--muted)" }}>{source.chunkText}</p>
+          {/* Right panel: Workspace Memory Card & Ground sources references */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            
+            {/* Workspace Memory Card */}
+            {memoryQuery.data && (
+              <aside
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "12px",
+                  padding: "1.25rem",
+                  boxShadow: "0 4px 15px rgba(0,0,0,0.01)"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "0.5rem", marginBottom: "0.75rem" }}>
+                  <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.9rem", margin: 0, color: "var(--forest-dark)" }}>
+                    🧠 Workspace Memory
+                  </h4>
+                  <span style={{ fontSize: "0.65rem", padding: "2px 7px", background: "rgba(16, 185, 129, 0.15)", color: "#047857", borderRadius: "10px", fontWeight: 700 }}>
+                    Active
+                  </span>
                 </div>
-              ))}
-              {(!chatMutation.data || !chatMutation.data.sources.length) && (
-                <p className="muted-message" style={{ textAlign: "center", fontSize: "0.8rem" }}>
-                  No source context chunks loaded yet.
-                </p>
-              )}
-            </div>
-          </aside>
+                
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", fontSize: "0.8rem" }}>
+                  <div>
+                    <strong style={{ color: "var(--muted)", display: "block" }}>Workspace Purpose:</strong>
+                    <span style={{ color: "var(--forest-dark)" }}>{memoryQuery.data.purpose}</span>
+                  </div>
+                  {memoryQuery.data.defaultWorkflow && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Workflow Template:</strong>
+                      <span style={{ color: "var(--forest-dark)", fontSize: "0.75rem" }}>
+                        {memoryQuery.data.defaultWorkflow.templateName} ({memoryQuery.data.defaultWorkflow.stages.join(" ➔ ")})
+                      </span>
+                    </div>
+                  )}
+                  {memoryQuery.data.activeUsers.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block", marginBottom: "3px" }}>Team Members:</strong>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                        {memoryQuery.data.activeUsers.map((user) => (
+                          <span key={user} style={{ padding: "1px 6px", background: "white", border: "1px solid var(--line)", borderRadius: "4px", fontSize: "0.75rem" }}>
+                            {user}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {memoryQuery.data.keyDocs.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Key Documents:</strong>
+                      <ul style={{ margin: "2px 0 0 0", paddingLeft: "1rem", color: "var(--forest-dark)" }}>
+                        {memoryQuery.data.keyDocs.map((doc) => <li key={doc}>{doc}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {memoryQuery.data.rules.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Automation Rules:</strong>
+                      <ul style={{ margin: "2px 0 0 0", paddingLeft: "1rem", color: "var(--forest-dark)" }}>
+                        {memoryQuery.data.rules.map((rule) => <li key={rule}>{rule}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {memoryQuery.data.goals.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Current Goals:</strong>
+                      <ul style={{ margin: "2px 0 0 0", paddingLeft: "1rem", color: "var(--forest-dark)" }}>
+                        {memoryQuery.data.goals.map((goal) => <li key={goal}>{goal}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            )}
+
+            {/* Retrieved sources */}
+            <aside
+              style={{
+                background: "white",
+                border: "1px solid var(--line)",
+                borderRadius: "12px",
+                padding: "1.25rem",
+                height: "fit-content"
+              }}
+            >
+              <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.95rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <FileText size={16} /> Retrieved sources
+              </h4>
+              <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                {chatMutation.data?.sources.map((source, idx) => (
+                  <div
+                    key={source.chunkId}
+                    style={{
+                      padding: "0.75rem",
+                      border: "1px solid var(--line)",
+                      background: "var(--surface-muted)",
+                      borderRadius: "6px",
+                      fontSize: "0.8rem"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+                      <span>{source.title}</span>
+                      <span style={{ color: "var(--status-purple)" }}>[Source {idx + 1}]</span>
+                    </div>
+                    <p style={{ margin: "0.4rem 0", color: "var(--muted)" }}>{source.chunkText}</p>
+                  </div>
+                ))}
+                {(!chatMutation.data || !chatMutation.data.sources.length) && (
+                  <p className="muted-message" style={{ textAlign: "center", fontSize: "0.8rem" }}>
+                    No source context chunks loaded yet.
+                  </p>
+                )}
+              </div>
+            </aside>
+          </div>
         </div>
       )}
 
@@ -292,20 +432,47 @@ export function AssistantPage({
                   boxShadow: "0 4px 15px rgba(0,0,0,0.02)"
                 }}
               >
-                <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, color: "var(--forest-dark)" }}>
-                  Planned Action Execution
-                </h4>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, color: "var(--forest-dark)", margin: 0 }}>
+                    Planned Action Execution
+                  </h4>
+                  <span style={{
+                    fontSize: "0.7rem",
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    background: previewMutation.data.action.can_execute ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                    color: previewMutation.data.action.can_execute ? "#047857" : "#b91c1c"
+                  }}>
+                    {previewMutation.data.action.can_execute ? "✓ Verified executable" : "⚠ Blocked - Insufficient context"}
+                  </span>
+                </div>
+                
                 <p style={{ color: "var(--muted)", fontSize: "0.85rem", margin: "0.25rem 0 1rem 0" }}>
                   AI Agent has drafted a transaction. Confirm parameters to execute.
                 </p>
 
                 <div className="tool-preview-drawer">
-                  <div className="tool-preview-title">
-                    <Terminal size={15} /> Tool Name: {previewMutation.data.action.tool}
+                  <div className="tool-preview-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span><Terminal size={15} /> Tool Name: {previewMutation.data.action.tool}</span>
+                    <span style={{ fontSize: "0.75rem", color: "var(--status-purple)", fontWeight: 600 }}>
+                      Confidence: {previewMutation.data.action.confidence}%
+                    </span>
                   </div>
-                  <p style={{ fontSize: "0.85rem", color: "#5b21b6", marginTop: "0.25rem" }}>
-                    <strong>Rationale:</strong> {previewMutation.data.action.rationale}
-                  </p>
+                  
+                  <div style={{ padding: "0.75rem", borderTop: "1px solid var(--line)", fontSize: "0.82rem", color: "var(--forest-dark)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <div>
+                      <strong style={{ color: "var(--muted)" }}>Intent:</strong> {previewMutation.data.action.intent}
+                    </div>
+                    {previewMutation.data.action.required_sources.length > 0 && (
+                      <div>
+                        <strong style={{ color: "var(--muted)" }}>Required Grounding:</strong> {previewMutation.data.action.required_sources.join(", ")}
+                      </div>
+                    )}
+                    <div>
+                      <strong style={{ color: "var(--muted)" }}>Rationale:</strong> {previewMutation.data.action.rationale}
+                    </div>
+                  </div>
                   
                   <div className="tool-preview-args">
                     {JSON.stringify(previewMutation.data.action.arguments, null, 2)}
@@ -313,7 +480,11 @@ export function AssistantPage({
                 </div>
 
                 <div style={{ display: "flex", gap: "0.5rem", marginTop: "1.25rem" }}>
-                  <button className="primary" onClick={() => executeMutation.mutate()} disabled={executeMutation.isPending}>
+                  <button 
+                    className="primary" 
+                    onClick={() => executeMutation.mutate()} 
+                    disabled={executeMutation.isPending || !previewMutation.data.action.can_execute}
+                  >
                     {executeMutation.isPending ? "Executing..." : "Confirm and execute"}
                   </button>
                   <button
@@ -347,26 +518,103 @@ export function AssistantPage({
             )}
           </div>
 
-          {/* Right panel: Agent security constraints details */}
-          <aside
-            style={{
-              background: "white",
-              border: "1px solid var(--line)",
-              borderRadius: "12px",
-              padding: "1.25rem",
-              height: "fit-content"
-            }}
-          >
-            <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.95rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <ShieldCheck size={16} className="text-green-600" /> Security parameters
-            </h4>
-            <ul style={{ margin: "0.75rem 0 0 0", paddingLeft: "1.2rem", fontSize: "0.8rem", color: "var(--forest-dark)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              <li><strong>Dry-Run Mode</strong>: AI cannot commit state changes without explicit user approval.</li>
-              <li><strong>Validated Inputs</strong>: All parameters are run against Zod validators.</li>
-              <li><strong>Isolation</strong>: Tasks/docs constraints are scoped to the active workspace only.</li>
-              <li><strong>Permissions</strong>: Action runner uses user-level RBAC filters.</li>
-            </ul>
-          </aside>
+          {/* Right panel: Workspace Memory Card & Security parameters */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            
+            {/* Workspace Memory Card */}
+            {memoryQuery.data && (
+              <aside
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "12px",
+                  padding: "1.25rem",
+                  boxShadow: "0 4px 15px rgba(0,0,0,0.01)"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "0.5rem", marginBottom: "0.75rem" }}>
+                  <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.9rem", margin: 0, color: "var(--forest-dark)" }}>
+                    🧠 Workspace Memory
+                  </h4>
+                  <span style={{ fontSize: "0.65rem", padding: "2px 7px", background: "rgba(16, 185, 129, 0.15)", color: "#047857", borderRadius: "10px", fontWeight: 700 }}>
+                    Active
+                  </span>
+                </div>
+                
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", fontSize: "0.8rem" }}>
+                  <div>
+                    <strong style={{ color: "var(--muted)", display: "block" }}>Workspace Purpose:</strong>
+                    <span style={{ color: "var(--forest-dark)" }}>{memoryQuery.data.purpose}</span>
+                  </div>
+                  {memoryQuery.data.defaultWorkflow && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Workflow Template:</strong>
+                      <span style={{ color: "var(--forest-dark)", fontSize: "0.75rem" }}>
+                        {memoryQuery.data.defaultWorkflow.templateName} ({memoryQuery.data.defaultWorkflow.stages.join(" ➔ ")})
+                      </span>
+                    </div>
+                  )}
+                  {memoryQuery.data.activeUsers.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block", marginBottom: "3px" }}>Team Members:</strong>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                        {memoryQuery.data.activeUsers.map((user) => (
+                          <span key={user} style={{ padding: "1px 6px", background: "white", border: "1px solid var(--line)", borderRadius: "4px", fontSize: "0.75rem" }}>
+                            {user}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {memoryQuery.data.keyDocs.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Key Documents:</strong>
+                      <ul style={{ margin: "2px 0 0 0", paddingLeft: "1rem", color: "var(--forest-dark)" }}>
+                        {memoryQuery.data.keyDocs.map((doc) => <li key={doc}>{doc}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {memoryQuery.data.rules.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Automation Rules:</strong>
+                      <ul style={{ margin: "2px 0 0 0", paddingLeft: "1rem", color: "var(--forest-dark)" }}>
+                        {memoryQuery.data.rules.map((rule) => <li key={rule}>{rule}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {memoryQuery.data.goals.length > 0 && (
+                    <div>
+                      <strong style={{ color: "var(--muted)", display: "block" }}>Current Goals:</strong>
+                      <ul style={{ margin: "2px 0 0 0", paddingLeft: "1rem", color: "var(--forest-dark)" }}>
+                        {memoryQuery.data.goals.map((goal) => <li key={goal}>{goal}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            )}
+
+            {/* Security Parameters */}
+            <aside
+              style={{
+                background: "white",
+                border: "1px solid var(--line)",
+                borderRadius: "12px",
+                padding: "1.25rem",
+                height: "fit-content"
+              }}
+            >
+              <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.95rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <ShieldCheck size={16} className="text-green-600" /> Security parameters
+              </h4>
+              <ul style={{ margin: "0.75rem 0 0 0", paddingLeft: "1.2rem", fontSize: "0.8rem", color: "var(--forest-dark)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                <li><strong>Dry-Run Mode</strong>: AI cannot commit state changes without explicit user approval.</li>
+                <li><strong>Validated Inputs</strong>: All parameters are run against Zod validators.</li>
+                <li><strong>Isolation</strong>: Tasks/docs constraints are scoped to the active workspace only.</li>
+                <li><strong>Permissions</strong>: Action runner uses user-level RBAC filters.</li>
+              </ul>
+            </aside>
+          </div>
         </div>
       )}
     </section>

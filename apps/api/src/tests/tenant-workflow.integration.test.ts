@@ -38,6 +38,11 @@ vi.mock("../services/ollama.js", () => ({
         result: {
           tool: "create_work_item",
           rationale: "Track the requested follow-up in the board.",
+          intent: "Create a work item to track the refund follow-up.",
+          confidence: 95,
+          required_sources: ["Refund Policy Document"],
+          suggested_action: "create_work_item",
+          can_execute: true,
           arguments: {
             title: "Prepare refund follow-up report",
             description: "Created after confirmed assistant command.",
@@ -46,6 +51,18 @@ vi.mock("../services/ollama.js", () => ({
         },
         tokensIn: 18,
         tokensOut: 22
+      };
+    }
+    if (messages.some((message) => message.content.includes("You are a workspace-grounded AI assistant"))) {
+      return {
+        result: {
+          answer: "Refund requests require manager review before payment is released.",
+          confidence: 90,
+          insufficientContext: false,
+          sourcesUsed: ["Refund policy"]
+        },
+        tokensIn: 25,
+        tokensOut: 20
       };
     }
     return {
@@ -465,6 +482,11 @@ describe("tenant-aware workflow foundation", () => {
     const actionPlan = {
       tool: "update_work_item_status",
       rationale: "Fuzzy matching transition test",
+      intent: "Fuzzy matching transition test intent",
+      confidence: 90,
+      required_sources: [],
+      suggested_action: "update_work_item_status",
+      can_execute: true,
       arguments: {
         itemTitle: "community event",
         stageName: "In Progress"
@@ -490,6 +512,11 @@ describe("tenant-aware workflow foundation", () => {
     const assignPlan = {
       tool: "assign_work_item",
       rationale: "Fuzzy matching assign test",
+      intent: "Fuzzy matching assign test intent",
+      confidence: 90,
+      required_sources: [],
+      suggested_action: "assign_work_item",
+      can_execute: true,
       arguments: {
         itemTitle: "community event",
         assigneeName: "Alpha Owner"

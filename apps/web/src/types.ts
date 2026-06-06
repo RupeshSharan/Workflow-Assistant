@@ -80,7 +80,7 @@ export interface WorkflowDraft {
   }>;
 }
 
-export type CommandAction =
+export type CommandAction = (
   | {
       tool: "create_work_item";
       rationale: string;
@@ -113,7 +113,24 @@ export type CommandAction =
         itemTitle: string;
         assigneeName: string;
       };
-    };
+    }
+) & {
+  intent: string;
+  confidence: number;
+  required_sources: string[];
+  suggested_action: string;
+  can_execute: boolean;
+};
+
+export interface WorkspaceMemory {
+  name: string;
+  purpose: string;
+  defaultWorkflow: { templateName: string; stages: string[] } | null;
+  activeUsers: string[];
+  keyDocs: string[];
+  goals: string[];
+  rules: string[];
+}
 
 export interface AutomationRule {
   id: string;
