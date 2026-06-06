@@ -63,3 +63,6 @@ storage-data/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Project Reference/Local Logs (Local use only)
+reference.md
