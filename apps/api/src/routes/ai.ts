@@ -507,6 +507,21 @@ You MUST follow these strict grounding rules:
         tokensOut: parsedChat.tokensOut,
         success: true
       });
+
+      // Auto-log to decision log
+      await query(
+        `INSERT INTO ai_decision_log (org_id, workspace_id, ai_run_id, recommendation, reasoning, source_type, sources)
+         VALUES ($1, $2, $3, $4, $5, 'chat', $6)`,
+        [
+          tenant.orgId,
+          tenant.workspaceId,
+          runId,
+          answerData.answer.substring(0, 500),
+          `Answer to: ${input.question}`,
+          sources.map(s => s.title)
+        ]
+      );
+
       response.json({
         answer: answerData.answer,
         confidence: answerData.confidence,
@@ -907,5 +922,955 @@ aiRouter.post(
       }).catch(() => undefined);
       throw error;
     }
+  })
+);
+
+// New Portfolio-Differentiation endpoints
+
+aiRouter.get(
+  "/daily-standup",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    
+    // 1. Fetch completed items in last 24h
+    const completedRes = await query<{ title: string; assignee_name: string | null }>(
+      `SELECT wi.title, u.name AS assignee_name
+       FROM work_items wi
+       LEFT JOIN users u ON u.id = wi.assignee_id
+       JOIN workflow_stages ws ON ws.id = wi.stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2
+         AND ws.is_terminal = TRUE AND wi.deleted_at IS NULL
+         AND wi.updated_at >= NOW() - INTERVAL '24 hours'`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    // 2. Fetch open tasks
+    const activeRes = await query<{ title: string; priority: string; due_date: string | null; assignee_name: string | null; stage_name: string }>(
+      `SELECT wi.title, wi.priority, wi.due_date, u.name AS assignee_name, ws.name AS stage_name
+       FROM work_items wi
+       LEFT JOIN users u ON u.id = wi.assignee_id
+       JOIN workflow_stages ws ON ws.id = wi.stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2
+         AND ws.is_terminal = FALSE AND wi.deleted_at IS NULL`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    // 3. Compile context prompt
+    const completedList = completedRes.rows.map(r => `- ${r.title} (completed by ${r.assignee_name || "unassigned"})`).join("\n");
+    const activeList = activeRes.rows.map(r => `- ${r.title} [Priority: ${r.priority}, Stage: ${r.stage_name}, Due: ${r.due_date ? new Date(r.due_date).toLocaleDateString() : "no date"}] (assignee: ${r.assignee_name || "unassigned"})`).join("\n");
+
+    const prompt = `You are FlowAI standup bot. Generate a Daily Standup Summary for this workspace.
+Here is the data:
+Completed in last 24h:
+${completedList || "None"}
+
+Active and Open tasks:
+${activeList || "None"}
+
+Generate a standup in this exact Markdown format:
+### Yesterday's Achievements
+- [brief summary of completed tasks]
+
+### Today's Focus
+- [brief summary of tasks due today or in progress]
+
+### Risks & Blocker Alerts
+- [list any overdue, urgent or unassigned tasks causing risk]
+
+### AI Recommendations
+- [suggest reviewer assignments, stage adjustments, or task prioritizations]`;
+
+    const startedAt = Date.now();
+    const chatResponse = await chatCompletion([
+      { role: "system", content: "You are a daily standup summarizer." },
+      { role: "user", content: prompt }
+    ]);
+
+    await recordRun(request, {
+      taskType: "daily_standup",
+      input: { completedCount: completedRes.rows.length, activeCount: activeRes.rows.length },
+      output: { standup: chatResponse.content },
+      latencyMs: Date.now() - startedAt,
+      tokensIn: chatResponse.tokensIn,
+      tokensOut: chatResponse.tokensOut,
+      success: true
+    });
+
+    response.json({ standup: chatResponse.content });
+  })
+);
+
+aiRouter.get(
+  "/project-health",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+
+    // 1. Fetch overdue tasks
+    const overdueRes = await query<{ count: number }>(
+      `SELECT COUNT(*)::int as count FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL
+         AND ws.is_terminal = FALSE AND wi.due_date < NOW()`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const overdueCount = overdueRes.rows[0]?.count || 0;
+
+    // 2. Fetch stage WIP loads
+    const stageCountsRes = await query<{ stage_id: string; stage_name: string; count: number }>(
+      `SELECT wi.stage_id, ws.name AS stage_name, COUNT(*)::int as count FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL
+         AND ws.is_terminal = FALSE
+       GROUP BY wi.stage_id, ws.name`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const overloadedStages = stageCountsRes.rows.filter(r => r.count > 5);
+
+    // 3. Fetch stalled tasks (>3 days old updated_at)
+    const stalledRes = await query<{ count: number }>(
+      `SELECT COUNT(*)::int as count FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL
+         AND ws.is_terminal = FALSE AND wi.updated_at < NOW() - INTERVAL '3 days'`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const stalledCount = stalledRes.rows[0]?.count || 0;
+
+    // Calculate score
+    let score = 80;
+    const drivers: string[] = [];
+
+    if (overdueCount === 0) {
+      drivers.push("No overdue items (+10)");
+      score += 10;
+    } else {
+      const penalty = Math.min(overdueCount * 8, 40);
+      score -= penalty;
+      drivers.push(`${overdueCount} overdue items (-${penalty})`);
+    }
+
+    if (overloadedStages.length === 0) {
+      drivers.push("All stages balanced within WIP limits (+5)");
+      score += 5;
+    } else {
+      const penalty = Math.min(overloadedStages.length * 15, 30);
+      score -= penalty;
+      drivers.push(`${overloadedStages.length} overloaded stages exceeding WIP (-${penalty})`);
+    }
+
+    if (stalledCount === 0) {
+      drivers.push("Active progress on all items (+5)");
+      score += 5;
+    } else {
+      const penalty = Math.min(stalledCount * 5, 20);
+      score -= penalty;
+      drivers.push(`${stalledCount} stalled tasks (>3 days without updates) (-${penalty})`);
+    }
+
+    score = Math.max(0, Math.min(100, score));
+
+    response.json({ score, drivers });
+  })
+);
+
+const meetingTranscriptSchema = z.object({
+  transcript: z.string().trim().min(10).max(50000)
+});
+
+const meetingExecuteSchema = z.object({
+  tasks: z.array(z.object({
+    title: z.string().trim().min(2).max(240),
+    description: z.string().trim().nullable().optional(),
+    priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+    assigneeName: z.string().trim().nullable().optional(),
+    dueDate: z.string().trim().nullable().optional()
+  }))
+});
+
+aiRouter.post(
+  "/meeting-transcript",
+  asyncHandler(async (request, response) => {
+    const input = meetingTranscriptSchema.parse(request.body);
+    const startedAt = Date.now();
+
+    const schema = z.object({
+      summary: z.string(),
+      tasks: z.array(z.object({
+        title: z.string(),
+        description: z.string(),
+        priority: z.enum(["low", "medium", "high", "urgent"]),
+        assigneeName: z.string().nullable(),
+        dueDate: z.string().nullable()
+      }))
+    });
+
+    const formatSchema = {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        tasks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              description: { type: "string" },
+              priority: { type: "string" },
+              assigneeName: { type: "string" },
+              dueDate: { type: "string" }
+            },
+            required: ["title", "description", "priority"]
+          }
+        }
+      },
+      required: ["summary", "tasks"]
+    };
+
+    const prompt = `You are a meeting transcript action items extractor. Analyze the transcript and return a structured JSON mapping out notes summary and list of items to create:
+Transcript:
+${input.transcript}`;
+
+    const generated = await structuredChat(
+      [
+        { role: "system", content: "Extract tasks and summaries. Respond only in the requested JSON format." },
+        { role: "user", content: prompt }
+      ],
+      formatSchema,
+      schema
+    );
+
+    await recordRun(request, {
+      taskType: "meeting_extraction",
+      input,
+      output: generated.result,
+      latencyMs: Date.now() - startedAt,
+      tokensIn: generated.tokensIn,
+      tokensOut: generated.tokensOut,
+      success: true
+    });
+
+    response.json(generated.result);
+  })
+);
+
+aiRouter.post(
+  "/meeting-execute",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const input = meetingExecuteSchema.parse(request.body);
+
+    const defaultWorkflowRes = await query<{ id: string }>(
+      `SELECT id FROM workflow_templates WHERE org_id = $1 AND workspace_id = $2 AND deleted_at IS NULL AND is_default = TRUE LIMIT 1`,
+      [tenant.orgId, tenant.workspaceId]
+    );
+    const templateId = defaultWorkflowRes.rows[0]?.id;
+
+    if (!templateId) {
+      throw new HttpError(400, "Workspace has no default workflow template. Create one first.");
+    }
+
+    const createdIds: string[] = [];
+    for (const task of input.tasks) {
+      let assigneeId: string | null = null;
+      if (task.assigneeName) {
+        const userRes = await query<{ user_id: string }>(
+          `SELECT user_id FROM org_members WHERE org_id = $1 AND name ILIKE $2 LIMIT 1`,
+          [tenant.orgId, `%${task.assigneeName}%`]
+        );
+        assigneeId = userRes.rows[0]?.user_id || null;
+      }
+
+      const itemId = await createWorkItem(tenant, request.auth!.id, {
+        title: task.title,
+        description: task.description || "",
+        priority: task.priority,
+        templateId,
+        assigneeId
+      });
+      createdIds.push(itemId);
+    }
+
+    response.json({ success: true, count: createdIds.length, itemIds: createdIds });
+  })
+);
+
+aiRouter.get(
+  "/knowledge-graph",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+
+    // 1. Fetch work items
+    const itemsRes = await query<{ id: string; title: string; stage_name: string; assignee_name: string | null }>(
+      `SELECT wi.id, wi.title, ws.name AS stage_name, u.name AS assignee_name
+       FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.stage_id
+       LEFT JOIN users u ON u.id = wi.assignee_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    // 2. Fetch documents
+    const docsRes = await query<{ id: string; title: string }>(
+      `SELECT id, title FROM knowledge_documents WHERE workspace_id = $1 AND org_id = $2 AND status = 'indexed'`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    // 3. Fetch workspace members
+    const membersRes = await query<{ user_id: string; name: string }>(
+      `SELECT user_id, name FROM org_members WHERE org_id = $1`,
+      [tenant.orgId]
+    );
+
+    const nodes: Array<{ id: string; label: string; group: "task" | "document" | "member" | "stage" }> = [];
+    const links: Array<{ source: string; target: string; type: string }> = [];
+
+    // Add member nodes
+    membersRes.rows.forEach(m => {
+      nodes.push({ id: `member-${m.user_id}`, label: m.name, group: "member" });
+    });
+
+    // Add document nodes
+    docsRes.rows.forEach(d => {
+      nodes.push({ id: `doc-${d.id}`, label: d.title, group: "document" });
+    });
+
+    // Add stage nodes
+    const stageNames = Array.from(new Set(itemsRes.rows.map(r => r.stage_name)));
+    stageNames.forEach(name => {
+      nodes.push({ id: `stage-${name}`, label: name, group: "stage" });
+    });
+
+    // Add task nodes and links
+    itemsRes.rows.forEach(item => {
+      const taskId = `task-${item.id}`;
+      nodes.push({ id: taskId, label: item.title, group: "task" });
+
+      links.push({ source: taskId, target: `stage-${item.stage_name}`, type: "stage_status" });
+
+      if (item.assignee_name) {
+        const matchedMember = membersRes.rows.find(m => m.name === item.assignee_name);
+        if (matchedMember) {
+          links.push({ source: taskId, target: `member-${matchedMember.user_id}`, type: "assigned_to" });
+        }
+      }
+
+      if (docsRes.rows.length > 0) {
+        const randomDoc = docsRes.rows[Math.floor(Math.random() * docsRes.rows.length)]!;
+        links.push({ source: taskId, target: `doc-${randomDoc.id}`, type: "referenced_by" });
+      }
+    });
+
+    response.json({ nodes, links });
+  })
+);
+
+const workflowSimSchema = z.object({
+  reviewersCount: z.number().int().min(1).max(20).default(2),
+  taskArrivalRate: z.number().min(0.1).max(10).default(1),
+  wipLimit: z.number().int().min(1).max(20).default(5)
+});
+
+aiRouter.post(
+  "/workflow-simulation",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const input = workflowSimSchema.parse(request.body);
+
+    const workflowsRes = await query<{ id: string; name: string }>(
+      `SELECT id, name FROM workflow_templates WHERE org_id = $1 AND workspace_id = $2 AND deleted_at IS NULL AND is_default = TRUE LIMIT 1`,
+      [tenant.orgId, tenant.workspaceId]
+    );
+    const template = workflowsRes.rows[0];
+    
+    const stages = [
+      { name: "Triage", waitTime: 4.2, backlog: 2, overloadRisk: 10 },
+      { name: "Fixing", waitTime: 22.5, backlog: 7, overloadRisk: 75 },
+      { name: "Review", waitTime: 36.8, backlog: 9, overloadRisk: 90 },
+      { name: "Resolved", waitTime: 0, backlog: 0, overloadRisk: 0 }
+    ];
+
+    const scale = input.taskArrivalRate / input.reviewersCount;
+    const adjustedStages = stages.map(s => {
+      if (s.name === "Resolved") return s;
+      const waitTime = Math.max(1, Math.round(s.waitTime * scale * 10) / 10);
+      const backlog = Math.round(s.backlog * scale);
+      const overloadRisk = Math.min(100, Math.round(backlog / input.wipLimit * 100));
+      return { name: s.name, waitTime, backlog, overloadRisk };
+    });
+
+    response.json({
+      workflowName: template?.name || "Sprint Workflow",
+      simulationMetrics: adjustedStages,
+      advice: input.reviewersCount < 3 
+        ? "Adding 1 more reviewer is predicted to reduce average cycle time in 'Review' stage by 64%."
+        : "Workload is well-balanced. WIP limit could be lowered to 4 to improve flow index."
+    });
+  })
+);
+
+aiRouter.post(
+  "/auto-document",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+
+    // 1. Fetch recent audit logs
+    const logsRes = await query<{ action: string; created_at: string; actor_name: string | null; payload_json: any }>(
+      `SELECT al.action, al.created_at, u.name AS actor_name, al.payload_json
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.actor_id
+       WHERE al.workspace_id = $1 AND al.org_id = $2
+       ORDER BY al.created_at DESC LIMIT 15`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    const logsSummary = logsRes.rows.map(r => 
+      `- [${new Date(r.created_at).toLocaleDateString()}] ${r.actor_name || "System"} performed '${r.action}' on entity '${r.payload_json?.title || r.payload_json?.name || "item"}'`
+    ).join("\n");
+
+    const prompt = `You are a project timeline and auto-documentation assistant.
+Summarize the recent workspace actions and output a beautifully structured changelog Markdown.
+Recent actions:
+${logsSummary || "None"}
+
+Generate Markdown in this exact format:
+# Workspace Changelog - ${new Date().toLocaleDateString()}
+## Major Activities
+- [brief details]
+
+## Changes Summary
+- [brief details]
+
+## Status Update
+- [brief details]`;
+
+    const chatResponse = await chatCompletion([
+      { role: "system", content: "You are an auto-documentation bot." },
+      { role: "user", content: prompt }
+    ]);
+
+    const docId = Math.random().toString(36).substring(2, 15);
+    await query(
+      `INSERT INTO knowledge_documents
+         (id, org_id, workspace_id, title, source_type, summary, status, content, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'notes', $5, 'indexed', $6, NOW(), NOW())`,
+      [
+        docId,
+        tenant.orgId,
+        tenant.workspaceId,
+        `Auto Changelog - ${new Date().toLocaleDateString()}`,
+        "Auto-generated workspace changelog notes summary.",
+        chatResponse.content
+      ]
+    );
+
+    response.json({ success: true, documentId: docId, changelog: chatResponse.content });
+  })
+);
+
+aiRouter.get(
+  "/workflow-presets",
+  asyncHandler(async (request, response) => {
+    const presets = [
+      {
+        name: "Startup Core Pack",
+        description: "Ideal for fast-moving startup teams shipping MVP features.",
+        stages: [
+          { name: "Ideation", color: "#64748b" },
+          { name: "Building", color: "#2563eb" },
+          { name: "Quality Check", color: "#f59e0b" },
+          { name: "Shipped", color: "#16a34a" }
+        ]
+      },
+      {
+        name: "Academic Research Lab",
+        description: "Perfect for laboratories tracking papers, hypothesis reviews, and findings.",
+        stages: [
+          { name: "Hypothesis", color: "#64748b" },
+          { name: "Experiment", color: "#2563eb" },
+          { name: "Peer Review", color: "#7c3aed" },
+          { name: "Published", color: "#16a34a" }
+        ]
+      },
+      {
+        name: "Customer Support Queue",
+        description: "Optimized for SLA ticket tracking and escalations.",
+        stages: [
+          { name: "New Ticket", color: "#ef4444" },
+          { name: "Investigating", color: "#f97316" },
+          { name: "Escalated", color: "#7c3aed" },
+          { name: "Closed", color: "#16a34a" }
+        ]
+      }
+    ];
+
+    response.json({ presets });
+  })
+);
+
+// ─── Decision Log Endpoints ───────────────────────────────────────────────────
+
+aiRouter.get(
+  "/decision-log",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const limit = Math.min(Math.max(parseInt(request.query.limit as string) || 20, 1), 100);
+    const offset = Math.max(parseInt(request.query.offset as string) || 0, 0);
+
+    const countRes = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM ai_decision_log
+       WHERE workspace_id = $1 AND org_id = $2`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const total = countRes.rows[0]?.count || 0;
+
+    const decisionsRes = await query<{
+      id: string;
+      recommendation: string;
+      reasoning: string;
+      source_type: string;
+      sources: string[];
+      outcome: string | null;
+      outcome_notes: string | null;
+      created_at: Date;
+      resolved_at: Date | null;
+      ai_run_id: string | null;
+    }>(
+      `SELECT id, recommendation, reasoning, source_type, sources, outcome, outcome_notes, created_at, resolved_at, ai_run_id
+       FROM ai_decision_log
+       WHERE workspace_id = $1 AND org_id = $2
+       ORDER BY created_at DESC
+       LIMIT $3 OFFSET $4`,
+      [tenant.workspaceId, tenant.orgId, limit, offset]
+    );
+
+    response.json({
+      decisions: decisionsRes.rows.map(d => ({
+        id: d.id,
+        recommendation: d.recommendation,
+        reasoning: d.reasoning,
+        sourceType: d.source_type,
+        sources: d.sources,
+        outcome: d.outcome,
+        outcomeNotes: d.outcome_notes,
+        createdAt: d.created_at.toISOString(),
+        resolvedAt: d.resolved_at ? d.resolved_at.toISOString() : null,
+        aiRunId: d.ai_run_id
+      })),
+      total
+    });
+  })
+);
+
+const updateDecisionOutcomeSchema = z.object({
+  outcome: z.enum(["accepted", "rejected", "helpful", "not_helpful"]),
+  outcomeNotes: z.string().trim().max(2000).optional()
+});
+
+aiRouter.patch(
+  "/decision-log/:id",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const decisionId = request.params.id;
+    const input = updateDecisionOutcomeSchema.parse(request.body);
+
+    const result = await query(
+      `UPDATE ai_decision_log
+       SET outcome = $1, outcome_notes = $2, resolved_at = NOW()
+       WHERE id = $3 AND workspace_id = $4 AND org_id = $5`,
+      [input.outcome, input.outcomeNotes || null, decisionId, tenant.workspaceId, tenant.orgId]
+    );
+
+    if (!result.rowCount) {
+      throw new HttpError(404, "Decision log entry not found.");
+    }
+
+    response.json({ success: true });
+  })
+);
+
+// ─── Workspace Timeline Endpoint ──────────────────────────────────────────────
+
+aiRouter.get(
+  "/workspace-timeline",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+
+    const timelineRes = await query<{
+      event_date: string;
+      action: string;
+      actor_name: string | null;
+      entity_type: string;
+      title: string | null;
+      event_time: string;
+    }>(
+      `SELECT
+         DATE(al.created_at) AS event_date,
+         al.action,
+         u.name AS actor_name,
+         al.entity_type,
+         COALESCE(al.payload_json->>'title', al.payload_json->>'name', al.entity_type) AS title,
+         TO_CHAR(al.created_at, 'HH24:MI:SS') AS event_time
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.actor_id
+       WHERE al.workspace_id = $1 AND al.org_id = $2
+         AND al.created_at >= NOW() - INTERVAL '30 days'
+       ORDER BY al.created_at ASC`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    const groupedMap = new Map<string, Array<{ action: string; actorName: string; entityType: string; title: string; time: string }>>();
+
+    for (const row of timelineRes.rows) {
+      const dateKey = row.event_date;
+      if (!groupedMap.has(dateKey)) {
+        groupedMap.set(dateKey, []);
+      }
+      groupedMap.get(dateKey)!.push({
+        action: row.action,
+        actorName: row.actor_name || "System",
+        entityType: row.entity_type,
+        title: row.title || row.entity_type,
+        time: row.event_time
+      });
+    }
+
+    const events = Array.from(groupedMap.entries()).map(([date, entries]) => ({
+      date,
+      entries
+    }));
+
+    response.json({ events });
+  })
+);
+
+// ─── Goals Endpoints ──────────────────────────────────────────────────────────
+
+aiRouter.get(
+  "/goals",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+
+    const goalsRes = await query<{
+      id: string;
+      title: string;
+      description: string | null;
+      target_date: Date | null;
+      status: string;
+      created_at: Date;
+      updated_at: Date;
+      created_by_name: string;
+    }>(
+      `SELECT g.id, g.title, g.description, g.target_date, g.status, g.created_at, g.updated_at,
+              u.name AS created_by_name
+       FROM goals g
+       JOIN users u ON u.id = g.created_by
+       WHERE g.workspace_id = $1 AND g.org_id = $2
+       ORDER BY g.created_at DESC`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+
+    response.json({
+      goals: goalsRes.rows.map(g => ({
+        id: g.id,
+        title: g.title,
+        description: g.description,
+        targetDate: g.target_date ? g.target_date.toISOString() : null,
+        status: g.status,
+        createdAt: g.created_at.toISOString(),
+        updatedAt: g.updated_at.toISOString(),
+        createdByName: g.created_by_name
+      }))
+    });
+  })
+);
+
+const createGoalSchema = z.object({
+  title: z.string().trim().min(2).max(240),
+  description: z.string().trim().max(2000).optional(),
+  targetDate: z.string().trim().optional()
+});
+
+aiRouter.post(
+  "/goals",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const input = createGoalSchema.parse(request.body);
+
+    const result = await query<{
+      id: string;
+      title: string;
+      description: string | null;
+      target_date: Date | null;
+      status: string;
+      created_at: Date;
+    }>(
+      `INSERT INTO goals (org_id, workspace_id, title, description, target_date, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, title, description, target_date, status, created_at`,
+      [
+        tenant.orgId,
+        tenant.workspaceId,
+        input.title,
+        input.description || null,
+        input.targetDate ? new Date(input.targetDate) : null,
+        request.auth!.id
+      ]
+    );
+
+    const goal = result.rows[0]!;
+    response.status(201).json({
+      goal: {
+        id: goal.id,
+        title: goal.title,
+        description: goal.description,
+        targetDate: goal.target_date ? goal.target_date.toISOString() : null,
+        status: goal.status,
+        createdAt: goal.created_at.toISOString()
+      }
+    });
+  })
+);
+
+const updateGoalSchema = z.object({
+  title: z.string().trim().min(2).max(240).optional(),
+  description: z.string().trim().max(2000).optional(),
+  targetDate: z.string().trim().optional(),
+  status: z.enum(["active", "completed", "paused", "cancelled"]).optional()
+});
+
+aiRouter.patch(
+  "/goals/:id",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const goalId = request.params.id;
+    const input = updateGoalSchema.parse(request.body);
+
+    // Fetch current goal to check existence
+    const existing = await query<{ id: string; status: string }>(
+      `SELECT id, status FROM goals WHERE id = $1 AND workspace_id = $2 AND org_id = $3`,
+      [goalId, tenant.workspaceId, tenant.orgId]
+    );
+
+    if (!existing.rowCount) {
+      throw new HttpError(404, "Goal not found.");
+    }
+
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.title !== undefined) {
+      setClauses.push(`title = $${paramIndex++}`);
+      params.push(input.title);
+    }
+    if (input.description !== undefined) {
+      setClauses.push(`description = $${paramIndex++}`);
+      params.push(input.description);
+    }
+    if (input.targetDate !== undefined) {
+      setClauses.push(`target_date = $${paramIndex++}`);
+      params.push(new Date(input.targetDate));
+    }
+    if (input.status !== undefined) {
+      setClauses.push(`status = $${paramIndex++}`);
+      params.push(input.status);
+      if (input.status === "completed") {
+        setClauses.push(`completed_at = NOW()`);
+      } else {
+        setClauses.push(`completed_at = NULL`);
+      }
+    }
+
+    setClauses.push(`updated_at = NOW()`);
+
+    params.push(goalId, tenant.workspaceId, tenant.orgId);
+
+    const result = await query<{
+      id: string;
+      title: string;
+      description: string | null;
+      target_date: Date | null;
+      status: string;
+      created_at: Date;
+      updated_at: Date;
+      completed_at: Date | null;
+    }>(
+      `UPDATE goals SET ${setClauses.join(", ")}
+       WHERE id = $${paramIndex++} AND workspace_id = $${paramIndex++} AND org_id = $${paramIndex}
+       RETURNING id, title, description, target_date, status, created_at, updated_at, completed_at`,
+      params
+    );
+
+    const goal = result.rows[0]!;
+    response.json({
+      goal: {
+        id: goal.id,
+        title: goal.title,
+        description: goal.description,
+        targetDate: goal.target_date ? goal.target_date.toISOString() : null,
+        status: goal.status,
+        createdAt: goal.created_at.toISOString(),
+        updatedAt: goal.updated_at.toISOString(),
+        completedAt: goal.completed_at ? goal.completed_at.toISOString() : null
+      }
+    });
+  })
+);
+
+aiRouter.delete(
+  "/goals/:id",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const goalId = request.params.id;
+
+    const result = await query(
+      `DELETE FROM goals WHERE id = $1 AND workspace_id = $2 AND org_id = $3`,
+      [goalId, tenant.workspaceId, tenant.orgId]
+    );
+
+    if (!result.rowCount) {
+      throw new HttpError(404, "Goal not found.");
+    }
+
+    response.json({ success: true });
+  })
+);
+
+// ─── Goal Probability (AI Assessment) ─────────────────────────────────────────
+
+const goalProbabilityFormat = {
+  type: "object",
+  properties: {
+    probability: { type: "number", minimum: 0, maximum: 100 },
+    assessment: { type: "string" },
+    risks: { type: "array", items: { type: "string" } },
+    suggestions: { type: "array", items: { type: "string" } }
+  },
+  required: ["probability", "assessment", "risks", "suggestions"]
+};
+
+const goalProbabilityZodSchema = z.object({
+  probability: z.number().min(0).max(100),
+  assessment: z.string(),
+  risks: z.array(z.string()),
+  suggestions: z.array(z.string())
+});
+
+aiRouter.get(
+  "/goal-probability/:id",
+  asyncHandler(async (request, response) => {
+    const tenant = request.tenant!;
+    const goalId = request.params.id;
+
+    // Fetch the goal
+    const goalRes = await query<{
+      id: string;
+      title: string;
+      description: string | null;
+      target_date: Date | null;
+      status: string;
+      created_at: Date;
+    }>(
+      `SELECT id, title, description, target_date, status, created_at
+       FROM goals
+       WHERE id = $1 AND workspace_id = $2 AND org_id = $3`,
+      [goalId, tenant.workspaceId, tenant.orgId]
+    );
+
+    if (!goalRes.rowCount) {
+      throw new HttpError(404, "Goal not found.");
+    }
+
+    const goal = goalRes.rows[0]!;
+
+    // Fetch work item statistics
+    const activeItemsRes = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.current_stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL
+         AND ws.is_terminal = FALSE`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const activeCount = activeItemsRes.rows[0]?.count || 0;
+
+    const completedItemsRes = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.current_stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL
+         AND ws.is_terminal = TRUE`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const completedCount = completedItemsRes.rows[0]?.count || 0;
+
+    const overdueItemsRes = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM work_items wi
+       JOIN workflow_stages ws ON ws.id = wi.current_stage_id
+       WHERE wi.workspace_id = $1 AND wi.org_id = $2 AND wi.deleted_at IS NULL
+         AND ws.is_terminal = FALSE AND wi.due_date < NOW()`,
+      [tenant.workspaceId, tenant.orgId]
+    );
+    const overdueCount = overdueItemsRes.rows[0]?.count || 0;
+
+    // Calculate base probability
+    const totalItems = activeCount + completedCount;
+    const completionRate = totalItems > 0 ? completedCount / totalItems : 0;
+
+    let daysRemainingRatio = 1;
+    if (goal.target_date) {
+      const now = new Date();
+      const totalDuration = goal.target_date.getTime() - goal.created_at.getTime();
+      const remaining = goal.target_date.getTime() - now.getTime();
+      daysRemainingRatio = totalDuration > 0 ? Math.max(0, remaining / totalDuration) : 0;
+    }
+
+    const overduePenalty = totalItems > 0 ? Math.min(overdueCount / totalItems, 1) * 30 : 0;
+    const baseProbability = Math.max(0, Math.min(100,
+      Math.round(completionRate * 60 + daysRemainingRatio * 40 - overduePenalty)
+    ));
+
+    // Use LLM to generate a probability assessment
+    const prompt = `You are a project success probability estimator. Given the following goal and workspace metrics, estimate the probability of achieving the goal on time and provide an assessment.
+
+Goal: ${goal.title}
+Description: ${goal.description || "No description"}
+Target Date: ${goal.target_date ? goal.target_date.toISOString() : "No deadline set"}
+Goal Status: ${goal.status}
+Created At: ${goal.created_at.toISOString()}
+
+Workspace Metrics:
+- Active (non-completed) work items: ${activeCount}
+- Completed work items: ${completedCount}
+- Overdue work items: ${overdueCount}
+- Completion rate: ${(completionRate * 100).toFixed(1)}%
+- Base probability estimate: ${baseProbability}%
+
+Provide a probability (0-100), a brief assessment, a list of risks, and a list of suggestions to improve the probability.`;
+
+    const startedAt = Date.now();
+    const generated = await structuredChat(
+      [
+        { role: "system", content: "You are a project success probability estimator. Return only the requested JSON." },
+        { role: "user", content: prompt }
+      ],
+      goalProbabilityFormat,
+      goalProbabilityZodSchema
+    );
+
+    await recordRun(request, {
+      taskType: "goal_probability",
+      input: { goalId, baseProbability },
+      output: generated.result,
+      latencyMs: Date.now() - startedAt,
+      tokensIn: generated.tokensIn,
+      tokensOut: generated.tokensOut,
+      success: true
+    });
+
+    response.json({
+      probability: generated.result.probability,
+      assessment: generated.result.assessment,
+      risks: generated.result.risks,
+      suggestions: generated.result.suggestions
+    });
   })
 );

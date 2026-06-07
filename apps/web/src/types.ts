@@ -283,4 +283,45 @@ export interface AuditLog {
   workspaceName: string | null;
 }
 
+export interface DecisionLogEntry {
+  id: string;
+  recommendation: string;
+  reasoning: string;
+  sourceType: string;
+  sources: string[];
+  outcome: 'accepted' | 'rejected' | 'pending' | 'helpful' | 'not_helpful' | null;
+  outcomeNotes: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  aiRunId: string | null;
+}
+
+export interface TimelineEvent {
+  date: string;
+  entries: Array<{
+    action: string;
+    actorName: string | null;
+    entityType: string;
+    title: string;
+    time: string;
+  }>;
+}
+
+export interface Goal {
+  id: string;
+  title: string;
+  description: string | null;
+  targetDate: string | null;
+  status: 'active' | 'completed' | 'paused' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+  createdByName?: string;
+}
+
+export interface GoalProbability {
+  probability: number;
+  assessment: string;
+  risks: string[];
+  suggestions: string[];
+}
 

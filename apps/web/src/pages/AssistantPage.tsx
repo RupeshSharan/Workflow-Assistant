@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
-import { Bot, ShieldCheck, Terminal, FileText } from "lucide-react";
+import { Bot, ShieldCheck, Terminal, FileText, ThumbsUp, ThumbsDown } from "lucide-react";
 import { api } from "../api";
-import type { Session } from "../types";
+import type { Session, DecisionLogEntry } from "../types";
 
 interface AssistantPageProps {
   session: Session;
@@ -30,7 +30,7 @@ export function AssistantPage({
 }: AssistantPageProps) {
   const queryClient = useQueryClient();
   const location = useLocation();
-  const [activeMode, setActiveMode] = useState<"chat" | "agent">("chat");
+  const [activeMode, setActiveMode] = useState<"chat" | "agent" | "decisions">("chat");
   const [question, setQuestion] = useState("");
   const [command, setCommand] = useState("");
 
@@ -104,6 +104,9 @@ export function AssistantPage({
         </button>
         <button className={activeMode === "agent" ? "active" : ""} onClick={() => setActiveMode("agent")}>
           <Terminal size={14} style={{ marginRight: "4px" }} /> Action Agent Mode
+        </button>
+        <button className={activeMode === "decisions" ? "active" : ""} onClick={() => setActiveMode("decisions")}>
+          <FileText size={14} style={{ marginRight: "4px" }} /> Decision Log
         </button>
       </div>
 
@@ -617,6 +620,177 @@ export function AssistantPage({
           </div>
         </div>
       )}
+
+      {/* Decision Log Mode view */}
+      {activeMode === "decisions" && (
+        <DecisionLogPanel session={session} />
+      )}
     </section>
+  );
+}
+
+/* ─── Decision Log Panel ────────────────────────────────────────────── */
+
+function DecisionLogPanel({ session }: { session: Session }) {
+  const queryClient = useQueryClient();
+
+  const decisionsQuery = useQuery({
+    queryKey: ["decision-log", session.activeWorkspaceId],
+    queryFn: () => api.decisionLog(session),
+    enabled: !!session.activeWorkspaceId
+  });
+
+  const outcomeMutation = useMutation({
+    mutationFn: ({ id, outcome }: { id: string; outcome: string }) =>
+      api.updateDecisionOutcome(session, id, outcome),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["decision-log", session.activeWorkspaceId] });
+    }
+  });
+
+  const decisions = decisionsQuery.data?.decisions ?? [];
+
+  return (
+    <div style={{ maxWidth: "900px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+        <div>
+          <h4 style={{ fontFamily: "var(--font-premium)", fontWeight: 800, fontSize: "1.1rem", color: "var(--forest-dark)", margin: 0 }}>
+            AI Decision Log
+          </h4>
+          <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
+            Review AI recommendations and provide feedback to improve future suggestions.
+          </p>
+        </div>
+        {decisionsQuery.data && (
+          <span style={{ fontSize: "0.75rem", fontWeight: 700, padding: "4px 10px", background: "var(--mint)", color: "var(--forest-dark)", borderRadius: "12px" }}>
+            {decisionsQuery.data.total} total
+          </span>
+        )}
+      </div>
+
+      {decisionsQuery.isLoading && (
+        <p style={{ textAlign: "center", color: "var(--muted)", padding: "2rem 0" }}>Loading decisions…</p>
+      )}
+
+      {decisionsQuery.error && (
+        <p className="form-error">Failed to load decision log: {decisionsQuery.error.message}</p>
+      )}
+
+      {!decisionsQuery.isLoading && decisions.length === 0 && (
+        <div className="card-premium" style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: "14px", padding: "3rem 1.5rem", textAlign: "center" }}>
+          <p style={{ color: "var(--muted)", fontSize: "0.9rem", margin: 0 }}>No AI decisions recorded yet. Decisions appear when the AI makes recommendations through chat or agent actions.</p>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        {decisions.map((d: DecisionLogEntry) => (
+          <article
+            key={d.id}
+            className="card-premium"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--line)",
+              borderRadius: "14px",
+              padding: "1.25rem 1.5rem",
+              boxShadow: "0 4px 15px rgba(0,0,0,0.02)"
+            }}
+          >
+            {/* Header row */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.75rem" }}>
+              <div style={{ flex: 1, marginRight: "1rem" }}>
+                <h5 style={{ fontFamily: "var(--font-premium)", fontWeight: 700, fontSize: "0.92rem", color: "var(--forest-dark)", margin: 0 }}>
+                  {d.recommendation.length > 120 ? d.recommendation.slice(0, 120) + "…" : d.recommendation}
+                </h5>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0 }}>
+                <span style={{
+                  fontSize: "0.68rem",
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: "10px",
+                  background: "rgba(139, 92, 246, 0.12)",
+                  color: "#7c3aed"
+                }}>
+                  {d.sourceType}
+                </span>
+                {d.outcome && (
+                  <span style={{
+                    fontSize: "0.68rem",
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: "10px",
+                    background: d.outcome === "helpful" || d.outcome === "accepted"
+                      ? "rgba(16, 185, 129, 0.15)"
+                      : d.outcome === "not_helpful" || d.outcome === "rejected"
+                        ? "rgba(239, 68, 68, 0.12)"
+                        : "rgba(245, 158, 11, 0.12)",
+                    color: d.outcome === "helpful" || d.outcome === "accepted"
+                      ? "#047857"
+                      : d.outcome === "not_helpful" || d.outcome === "rejected"
+                        ? "#b91c1c"
+                        : "#b45309"
+                  }}>
+                    {d.outcome.replace("_", " ")}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Reasoning */}
+            <p style={{ fontSize: "0.82rem", color: "var(--muted)", margin: "0 0 0.75rem 0", lineHeight: "1.55" }}>
+              {d.reasoning}
+            </p>
+
+            {/* Footer: date + actions */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "0.75rem", borderTop: "1px solid var(--line)" }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+                {new Date(d.createdAt).toLocaleDateString()} · {new Date(d.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+
+              <div style={{ display: "flex", gap: "0.4rem" }}>
+                <button
+                  onClick={() => outcomeMutation.mutate({ id: d.id, outcome: "helpful" })}
+                  disabled={outcomeMutation.isPending || d.outcome === "helpful"}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "4px 10px",
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    borderRadius: "8px",
+                    border: d.outcome === "helpful" ? "1.5px solid #047857" : "1px solid var(--line)",
+                    background: d.outcome === "helpful" ? "rgba(16, 185, 129, 0.12)" : "white",
+                    color: d.outcome === "helpful" ? "#047857" : "var(--forest-dark)",
+                    cursor: d.outcome === "helpful" ? "default" : "pointer"
+                  }}
+                >
+                  <ThumbsUp size={12} /> Helpful
+                </button>
+                <button
+                  onClick={() => outcomeMutation.mutate({ id: d.id, outcome: "not_helpful" })}
+                  disabled={outcomeMutation.isPending || d.outcome === "not_helpful"}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "4px 10px",
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    borderRadius: "8px",
+                    border: d.outcome === "not_helpful" ? "1.5px solid #b91c1c" : "1px solid var(--line)",
+                    background: d.outcome === "not_helpful" ? "rgba(239, 68, 68, 0.10)" : "white",
+                    color: d.outcome === "not_helpful" ? "#b91c1c" : "var(--forest-dark)",
+                    cursor: d.outcome === "not_helpful" ? "default" : "pointer"
+                  }}
+                >
+                  <ThumbsDown size={12} /> Not Helpful
+                </button>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
   );
 }

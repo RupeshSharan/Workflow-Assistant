@@ -4,14 +4,18 @@ import type {
   CommandAction,
   Comment,
   CustomField,
+  DecisionLogEntry,
   HistoryEntry,
   ItemCustomField,
+  Goal,
+  GoalProbability,
   KnowledgeDocument,
   Member,
   Notification,
   Session,
   SearchMatch,
   Summary,
+  TimelineEvent,
   WorkItem,
   Workflow,
   WorkflowDraft,
@@ -364,5 +368,75 @@ export const api = {
 
   auditLogs(session: Session): Promise<{ logs: AuditLog[] }> {
     return request("/org/audit-logs", { session });
+  },
+
+  dailyStandup(session: Session): Promise<{ standup: string }> {
+    return request("/ai/daily-standup", { session });
+  },
+
+  projectHealth(session: Session): Promise<{ score: number; drivers: string[] }> {
+    return request("/ai/project-health", { session });
+  },
+
+  meetingTranscript(session: Session, transcript: string): Promise<{ summary: string; tasks: any[] }> {
+    return request("/ai/meeting-transcript", { method: "POST", session, body: { transcript } });
+  },
+
+  meetingExecute(session: Session, tasks: any[]): Promise<{ success: boolean; count: number }> {
+    return request("/ai/meeting-execute", { method: "POST", session, body: { tasks } });
+  },
+
+  knowledgeGraph(session: Session): Promise<{ nodes: any[]; links: any[] }> {
+    return request("/ai/knowledge-graph", { session });
+  },
+
+  workflowSimulation(session: Session, reviewersCount: number, taskArrivalRate: number, wipLimit: number): Promise<{ workflowName: string; simulationMetrics: any[]; advice: string }> {
+    return request("/ai/workflow-simulation", { method: "POST", session, body: { reviewersCount, taskArrivalRate, wipLimit } });
+  },
+
+  autoDocument(session: Session): Promise<{ success: boolean; documentId: string; changelog: string }> {
+    return request("/ai/auto-document", { method: "POST", session });
+  },
+
+  presetsMarketplace(session: Session): Promise<{ presets: any[] }> {
+    return request("/ai/workflow-presets", { session });
+  },
+
+  // Decision Log
+  decisionLog(session: Session, limit?: number, offset?: number): Promise<{ decisions: DecisionLogEntry[]; total: number }> {
+    const params = new URLSearchParams();
+    if (limit) params.set('limit', String(limit));
+    if (offset) params.set('offset', String(offset));
+    return request(`/ai/decision-log?${params}`, { session });
+  },
+
+  updateDecisionOutcome(session: Session, decisionId: string, outcome: string, notes?: string): Promise<{ success: boolean }> {
+    return request(`/ai/decision-log/${decisionId}`, { method: 'PATCH', session, body: { outcome, outcomeNotes: notes } });
+  },
+
+  // Workspace Timeline
+  workspaceTimeline(session: Session): Promise<{ events: TimelineEvent[] }> {
+    return request('/ai/workspace-timeline', { session });
+  },
+
+  // Goals
+  goals(session: Session): Promise<{ goals: Goal[] }> {
+    return request('/ai/goals', { session });
+  },
+
+  createGoal(session: Session, input: { title: string; description?: string; targetDate?: string }): Promise<{ goal: Goal }> {
+    return request('/ai/goals', { method: 'POST', session, body: input });
+  },
+
+  updateGoal(session: Session, goalId: string, input: { title?: string; description?: string; targetDate?: string; status?: string }): Promise<{ goal: Goal }> {
+    return request(`/ai/goals/${goalId}`, { method: 'PATCH', session, body: input });
+  },
+
+  deleteGoal(session: Session, goalId: string): Promise<{ success: boolean }> {
+    return request(`/ai/goals/${goalId}`, { method: 'DELETE', session });
+  },
+
+  goalProbability(session: Session, goalId: string): Promise<GoalProbability> {
+    return request(`/ai/goal-probability/${goalId}`, { session });
   }
 };

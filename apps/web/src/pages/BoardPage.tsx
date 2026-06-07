@@ -36,9 +36,22 @@ export function BoardPage({ session }: BoardPageProps) {
   const [aiSummaryPending, setAiSummaryPending] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
 
+  // AI Notifications state
+  const [showAiNotifications, setShowAiNotifications] = useState(false);
+
   const workflows = useQuery({
     queryKey: ["workflows", session.activeWorkspaceId],
     queryFn: () => api.workflows(session)
+  });
+
+  const notifications = useQuery({
+    queryKey: ["notifications", session.activeWorkspaceId],
+    queryFn: () => api.notifications(session)
+  });
+
+  const readNotificationMutation = useMutation({
+    mutationFn: (notificationId: string) => api.readNotification(session, notificationId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["notifications", session.activeWorkspaceId] })
   });
 
   const workItems = useQuery({
@@ -221,6 +234,33 @@ export function BoardPage({ session }: BoardPageProps) {
               <option value="dueDate">Sort: Due Date</option>
             </select>
           </div>
+
+          {/* AI Notifications Toggle */}
+          <button
+            className="secondary"
+            onClick={() => setShowAiNotifications(!showAiNotifications)}
+            style={{
+              padding: "4px 10px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              background: showAiNotifications ? "rgba(139, 92, 246, 0.1)" : "white",
+              border: showAiNotifications ? "1px solid #8b5cf6" : "1px solid var(--line)",
+              color: showAiNotifications ? "#8b5cf6" : "var(--forest-dark)",
+              fontSize: "0.82rem",
+              fontWeight: 600,
+              borderRadius: "8px",
+              height: "32px",
+              margin: 0
+            }}
+          >
+            <Bot size={14} /> AI Alerts
+            {notifications.data?.notifications?.filter((n: any) => !n.readAt).length ? (
+              <span style={{ fontSize: "0.7rem", padding: "1px 5px", background: "#ef4444", color: "white", borderRadius: "10px", fontWeight: 700 }}>
+                {notifications.data.notifications.filter((n: any) => !n.readAt).length}
+              </span>
+            ) : null}
+          </button>
         </div>
       </div>
 
@@ -291,17 +331,41 @@ export function BoardPage({ session }: BoardPageProps) {
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", minHeight: "300px" }}>
                     {stageItems.map((item) => {
-                      const aiRisk = item.priority === "urgent" ? 95 : item.priority === "high" ? 70 : 35;
+                      // Dynamic risk calculation
+                      let aiRisk = 35;
+                      if (item.priority === "urgent") aiRisk = 95;
+                      else if (item.priority === "high") aiRisk = 75;
+                      else if (item.priority === "medium") aiRisk = 45;
+                      
+                      if (item.dueDate) {
+                        const isOverdue = new Date(item.dueDate) < new Date();
+                        if (isOverdue) {
+                          aiRisk = 99;
+                        } else {
+                          const hoursLeft = (new Date(item.dueDate).getTime() - Date.now()) / (1000 * 60 * 60);
+                          const slaHours = stage?.slaHours ?? 24;
+                          if (hoursLeft < 12) {
+                            aiRisk = Math.max(aiRisk, 90);
+                          } else if (hoursLeft < slaHours) {
+                            aiRisk = Math.max(aiRisk, 70);
+                          }
+                        }
+                      }
+                      const riskColor = aiRisk >= 80 ? "#b91c1c" : aiRisk >= 55 ? "#d97706" : "var(--forest-dark)";
+                      const riskBg = aiRisk >= 80 ? "rgba(239, 68, 68, 0.12)" : aiRisk >= 55 ? "rgba(245, 158, 11, 0.12)" : "var(--mint)";
+                      const cardBorder = aiRisk >= 80 ? "1px solid rgba(239, 68, 68, 0.45)" : "1px solid var(--line)";
+                      const cardShadow = aiRisk >= 80 ? "0 4px 12px rgba(239, 68, 68, 0.06)" : "none";
+
                       return (
                         <div
                           key={item.id}
                           className="work-card"
                           onClick={() => setDrawerItem(item)}
-                          style={{ cursor: "pointer", border: "1px solid var(--line)" }}
+                          style={{ cursor: "pointer", border: cardBorder, boxShadow: cardShadow }}
                         >
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span className={`priority ${item.priority}`}>{item.priority}</span>
-                            <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 6px", background: aiRisk > 70 ? "rgba(239, 68, 68, 0.15)" : "var(--mint)", color: aiRisk > 70 ? "#b91c1c" : "var(--forest-dark)", borderRadius: "6px" }}>
+                            <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 6px", background: riskBg, color: riskColor, borderRadius: "6px" }}>
                               AI Risk: {aiRisk}%
                             </span>
                           </div>
@@ -562,6 +626,59 @@ export function BoardPage({ session }: BoardPageProps) {
                 <strong>Task Created</strong> - Initial status set to `{drawerItem.stageName}`
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Notifications Floating Dropdown */}
+      {showAiNotifications && (
+        <div
+          style={{
+            position: "absolute",
+            top: "65px",
+            right: "2rem",
+            width: "360px",
+            maxHeight: "450px",
+            background: "white",
+            border: "1px solid var(--line)",
+            boxShadow: "0 10px 25px rgba(0,0,0,0.1)",
+            borderRadius: "12px",
+            zIndex: 350,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden"
+          }}
+        >
+          <header style={{ padding: "0.85rem 1rem", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--surface-muted)" }}>
+            <strong style={{ fontSize: "0.88rem", color: "var(--forest-dark)", display: "flex", alignItems: "center", gap: "6px" }}><Bot size={14} /> AI Context Alerts</strong>
+            <button style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0 }} onClick={() => setShowAiNotifications(false)}>
+              <X size={16} />
+            </button>
+          </header>
+          <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem" }}>
+            {notifications.isLoading ? (
+              <p style={{ textAlign: "center", fontSize: "0.8rem", color: "var(--muted)", padding: "1rem" }}>Loading alerts...</p>
+            ) : !notifications.data?.notifications?.length ? (
+              <p style={{ textAlign: "center", fontSize: "0.8rem", color: "var(--muted)", padding: "1.5rem" }}>No current context notifications.</p>
+            ) : (
+              notifications.data?.notifications.map((n: any) => (
+                <div key={n.id} style={{ padding: "0.75rem", borderBottom: "1px solid var(--line)", background: n.readAt ? "transparent" : "rgba(139, 92, 246, 0.04)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                    <span style={{ fontWeight: 700, fontSize: "0.82rem", color: "var(--forest-dark)" }}>{n.title}</span>
+                    {!n.readAt && (
+                      <button
+                        onClick={() => readNotificationMutation.mutate(n.id)}
+                        style={{ fontSize: "0.68rem", padding: "2px 6px", background: "transparent", border: "none", color: "#8b5cf6", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Dismiss
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.78rem", color: "var(--muted)", lineHeight: "1.4" }}>{n.body}</p>
+                  <small style={{ display: "block", marginTop: "4px", fontSize: "0.68rem", color: "var(--muted)" }}>{new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
