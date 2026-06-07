@@ -13,7 +13,8 @@ import {
   ChevronDown,
   User,
   Building,
-  Check
+  Check,
+  SlidersHorizontal
 } from "lucide-react";
 import type { Session, Workspace } from "../../types";
 
@@ -158,6 +159,9 @@ export function Sidebar({
       <nav className="nav">
         <button className={getButtonClass("/dashboard")} onClick={() => navigate("/dashboard")}>
           <LayoutDashboard size={18} /> Dashboard
+        </button>
+        <button className={getButtonClass("/board")} onClick={() => navigate("/board")}>
+          <SlidersHorizontal size={18} /> Work Board
         </button>
         <button className={getButtonClass("/workflows")} onClick={() => navigate("/workflows")}>
           <WorkflowIcon size={18} /> Workflows

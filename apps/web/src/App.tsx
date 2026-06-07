@@ -22,6 +22,7 @@ import { AutomationPage } from "./pages/AutomationPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { NotificationCenter } from "./pages/NotificationCenter";
+import { BoardPage } from "./pages/BoardPage";
 import type { Session, Workspace } from "./types";
 
 const SESSION_KEY = "workflow-platform-session";
@@ -41,6 +42,11 @@ function readSession(): Session | null {
 function DashboardWrapper() {
   const { session } = useOutletContext<{ session: Session }>();
   return <Dashboard session={session} />;
+}
+
+function BoardPageWrapper() {
+  const { session } = useOutletContext<{ session: Session }>();
+  return <BoardPage session={session} />;
 }
 
 function WorkflowBuilderWrapper() {
@@ -208,6 +214,7 @@ export function App() {
             >
               <Route index element={<InviteRedirector />} />
               <Route path="dashboard" element={<DashboardWrapper />} />
+              <Route path="board" element={<BoardPageWrapper />} />
               <Route path="workflows" element={<WorkflowBuilderWrapper />} />
               <Route path="documents" element={<DocumentsPageWrapper />} />
               <Route path="ai" element={<AssistantPageWrapper />} />

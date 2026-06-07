@@ -2420,3 +2420,316 @@ p {
   height: 200px;
 }
 
+/* ==========================================
+   FLOWAI 2.0 PREMIUM DESIGN LANGUAGE STYLES
+   ========================================== */
+
+/* Brand & AI Color Variables */
+:root {
+  --brand-purple: #7c3aed;
+  --brand-purple-light: #f5f3ff;
+  --brand-green: #10b981;
+  --brand-gradient: linear-gradient(135deg, #7c3aed 0%, #10b981 100%);
+  --accent-glow: 0 0 20px rgba(124, 58, 237, 0.15);
+  --shadow-premium: 0 10px 30px -5px rgba(20, 43, 36, 0.06), 0 4px 12px -2px rgba(0, 0, 0, 0.03);
+  --shadow-lift: 0 20px 40px -10px rgba(20, 43, 36, 0.12), 0 8px 16px -4px rgba(0, 0, 0, 0.05);
+  --border-premium: 1px solid rgba(227, 232, 225, 0.7);
+}
+
+/* Sidebar Dark Theme & Switchers */
+.sidebar {
+  background: #0b1513 !important;
+  border-right: 1px solid #142824 !important;
+  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.15);
+}
+.sidebar .brand-mark {
+  background: var(--brand-gradient) !important;
+  box-shadow: var(--accent-glow);
+}
+.sidebar .workspace-selector-trigger {
+  background: #112320 !important;
+  border: 1px solid #1a3530 !important;
+  color: #c0d0cb !important;
+}
+.sidebar .workspace-selector-trigger:hover {
+  background: #17302c !important;
+  color: white !important;
+}
+.sidebar .nav button {
+  color: #8ea8a0 !important;
+  transition: all 200ms ease;
+}
+.sidebar .nav button:hover {
+  background: #112320 !important;
+  color: white !important;
+}
+.sidebar .nav button.selected {
+  background: var(--brand-gradient) !important;
+  color: white !important;
+  box-shadow: var(--accent-glow);
+}
+.sidebar .user-profile-trigger {
+  border: 1px solid #1a3530 !important;
+}
+.sidebar .user-profile-trigger:hover {
+  background: #112320 !important;
+}
+.sidebar .user-menu-dropdown {
+  background: #0f211d !important;
+  border: 1px solid #1d3f38 !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2) !important;
+}
+.sidebar .user-menu-item {
+  color: #c0d0cb !important;
+}
+.sidebar .user-menu-item:hover {
+  background: #1a3530 !important;
+  color: white !important;
+}
+
+/* Layered cards with elevation */
+.card-premium {
+  background: white;
+  border: var(--border-premium);
+  border-radius: 16px;
+  box-shadow: var(--shadow-premium);
+  transition: all 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+.card-premium:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lift);
+}
+
+/* Large Hero Sections */
+.hero-gradient-card {
+  background: linear-gradient(135deg, #0e2b27 0%, #143d35 100%);
+  border-radius: 20px;
+  color: white;
+  padding: 2.25rem;
+  box-shadow: 0 20px 40px rgba(14, 43, 39, 0.15);
+  margin-bottom: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+.hero-gradient-card::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* SVG Sparklines & Charts */
+.sparkline-svg {
+  stroke: #10b981;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  filter: drop-shadow(0 2px 8px rgba(16, 185, 129, 0.3));
+}
+
+/* Micro-animations & Transitions */
+.slide-in-drawer {
+  animation: slideInRight 350ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Onboarding Setup Modal Overlay */
+.onboarding-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(14, 43, 39, 0.7);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  animation: fadeIn 300ms ease forwards;
+}
+.onboarding-modal {
+  background: white;
+  border-radius: 24px;
+  max-width: 600px;
+  width: 90%;
+  box-shadow: 0 25px 60px -15px rgba(0,0,0,0.3);
+  padding: 2.5rem;
+  border: 1px solid rgba(255,255,255,0.2);
+  transform: translateY(20px);
+  animation: modalSlideUp 400ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modalSlideUp {
+  to { transform: translateY(0); opacity: 1; }
+}
+.onboarding-step-indicator {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+.onboarding-dot {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 300ms ease;
+}
+.onboarding-dot.active {
+  background: var(--brand-purple);
+}
+
+/* Keyboard Command Palette */
+.command-palette-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 33, 29, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  padding-top: 15vh;
+  z-index: 900;
+}
+.command-palette-container {
+  background: white;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 650px;
+  max-height: 450px;
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+  border: var(--border-premium);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Visual Automations TCA Visualizer */
+.automation-visual-builder-nodes {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  position: relative;
+}
+.node-arrow {
+  color: var(--muted);
+  animation: pulseArrow 1.5s infinite ease-in-out;
+}
+@keyframes pulseArrow {
+  0%, 100% { opacity: 0.5; transform: translateX(0); }
+  50% { opacity: 1; transform: translateX(4px); }
+}
+
+/* Workflow Builder Zoom and Pan */
+.zoom-controls {
+  position: absolute;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  background: white;
+  border: var(--border-premium);
+  border-radius: 8px;
+  box-shadow: var(--shadow-premium);
+  display: flex;
+  gap: 1px;
+  overflow: hidden;
+}
+.zoom-btn {
+  background: white;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--forest-dark);
+}
+.zoom-btn:hover {
+  background: var(--surface-muted);
+}
+
+/* Timeline Today Strip */
+.timeline-strip-container {
+  background: white;
+  border-radius: 14px;
+  border: var(--border-premium);
+  padding: 1rem 1.25rem;
+  margin-top: 1.5rem;
+  box-shadow: var(--shadow-premium);
+}
+.timeline-strip-hours {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.timeline-event-marker {
+  height: 4px;
+  background: var(--brand-purple);
+  border-radius: 2px;
+  margin-top: 4px;
+}
+
+/* Workspace Cover picker in settings */
+.cover-picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.cover-option {
+  height: 60px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  background-size: cover;
+  background-position: center;
+}
+.cover-option.active {
+  border-color: var(--brand-purple);
+}
+.workspace-cover-banner {
+  height: 120px;
+  border-radius: 12px;
+  background-size: cover;
+  background-position: center;
+  margin-bottom: 1rem;
+}
+
+/* Loading skeletons */
+.skeleton-line {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: loadingSkeleton 1.5s infinite;
+  height: 14px;
+  border-radius: 4px;
+}
+@keyframes loadingSkeleton {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Visual connectors for rules builder cards */
+.rule-connector-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--brand-purple);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--brand-purple);
+}
+

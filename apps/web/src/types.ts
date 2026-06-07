@@ -199,6 +199,7 @@ export interface WorkItem {
   templateName: string;
   assigneeName: string | null;
   reporterName: string;
+  metadata?: any;
 }
 
 export interface Summary {
